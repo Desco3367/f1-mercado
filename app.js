@@ -334,6 +334,11 @@ function minimumBidForSlot(auction, slotId) {
   return Math.max(leaderMin, base);
 }
 
+function isHalfMillionStep(amount) {
+  if (!Number.isFinite(amount)) return false;
+  return Math.abs(amount - Math.round(amount / BID) * BID) < 1;
+}
+
 function ratingClass(rating) {
   const r = Number(rating || 0);
   if (r >= 90) return "gold";
@@ -487,6 +492,12 @@ function sortAuctions(auctions, sort) {
 
 function visibleAuctions(auctions, filter, sort) {
   return sortAuctions(filterAuctionsByCat(auctions, filter), sort);
+}
+
+function teamHasBid(auction, teamId) {
+  if (!auction || !teamId) return false;
+  if (auction.currentBidder === teamId) return true;
+  return Object.values(auction.bids || {}).some((bid) => bid.teamId === teamId);
 }
 
 function auctionFilterOptionsHtml(current) {
@@ -932,6 +943,7 @@ function renderTeam() {
   const teamId = state.session.teamId;
   const team = state.config.teams[teamId];
   const live = activeAuctions();
+  const myBids = live.filter((auction) => teamHasBid(auction, teamId));
   const won = teamRoster(teamId);
   const teamPool = availablePoolFor(ui.teamPoolSearch, ui.teamPoolFilter, ui.teamPoolSort);
   const outbid = live.filter((auction) => {
@@ -963,11 +975,18 @@ function renderTeam() {
 
       <nav class="tabs">
         <button class="tab ${ui.teamTab === "live" ? "btn-primary" : ""}" data-team-tab="live">Subastas activas (${live.length})</button>
+        <button class="tab ${ui.teamTab === "bids" ? "btn-primary" : ""}" data-team-tab="bids">Mis pujas (${myBids.length})</button>
         <button class="tab ${ui.teamTab === "pool" ? "btn-primary" : ""}" data-team-tab="pool">Abrir subasta (${teamPool.length})</button>
         <button class="tab ${ui.teamTab === "won" ? "btn-primary" : ""}" data-team-tab="won">Mis fichajes (${won.length})</button>
       </nav>
 
-      ${ui.teamTab === "won" ? renderTeamWon(teamId, won) : ui.teamTab === "pool" ? renderTeamPool(teamPool) : renderTeamLive(teamId, live)}
+      ${ui.teamTab === "won"
+        ? renderTeamWon(teamId, won)
+        : ui.teamTab === "pool"
+          ? renderTeamPool(teamPool)
+          : ui.teamTab === "bids"
+            ? renderTeamBids(teamId, myBids)
+            : renderTeamLive(teamId, live)}
     </section>
   `;
 }
@@ -1024,7 +1043,20 @@ function renderTeamLive(teamId, live) {
   `;
 }
 
-function renderTeamAuction(teamId, auction) {
+function renderTeamBids(teamId, auctions) {
+  if (!auctions.length) {
+    return `<div class="empty"><div class="muted">Todavia no participaste en subastas activas.</div></div>`;
+  }
+  const filtered = visibleAuctions(auctions, ui.teamAuctionFilter, ui.teamAuctionSort);
+  return `
+    ${renderAuctionFilter("team-auction-filter", ui.teamAuctionFilter, auctions, filtered, "team-auction-sort", ui.teamAuctionSort)}
+    ${filtered.length ? `
+      <div class="stack">${filtered.map((auction) => renderTeamAuction(teamId, auction, { showBidStatus: true })).join("")}</div>
+    ` : `<div class="card muted">No hay pujas propias con estos filtros.</div>`}
+  `;
+}
+
+function renderTeamAuction(teamId, auction, options = {}) {
   const stats = teamStats(teamId);
   const current = Number(auction.currentBid || 0);
   const base = auctionBasePrice(auction);
@@ -1044,6 +1076,7 @@ function renderTeamAuction(teamId, auction) {
   const bids = lastBids(auction);
   const wasOutbid = !leading && !ui.dismissedOutbid.has(auction.id) &&
     Object.values(auction.bids || {}).some((bid) => bid.teamId === teamId);
+  const participated = teamHasBid(auction, teamId);
   const bidBlockedText = !minRosterCheck.ok
     ? `Cupo completo: ${minRosterCheck.label}.`
     : `Minimo para ${selectedSlotLabel || "este slot"}: ${money(min)}.`;
@@ -1069,6 +1102,11 @@ function renderTeamAuction(teamId, auction) {
       </div>
 
       ${wasOutbid ? `<div class="pill red" style="margin-top:10px;">Te superaron - puja minima ${money(min)}</div>` : ""}
+      ${options.showBidStatus && participated ? `
+        <div class="pill ${leading ? "green" : "red"}" style="margin-top:10px;">
+          ${leading ? "Estas liderando esta puja" : "Te superaron en esta puja"}
+        </div>
+      ` : ""}
       ${!canBidCustom && !expired ? `<div class="pill red" style="margin-top:10px;">${escapeHtml(bidBlockedText)}</div>` : ""}
 
       <div class="row wrap" style="margin-top:12px;">
@@ -1927,6 +1965,10 @@ async function onAction(event) {
       const amount = action === "bid-min"
         ? minimumBidForSlot(auction, slot)
         : parseMoney(card.querySelector("[data-bid-input]")?.value);
+      if (Number.isFinite(amount) && !isHalfMillionStep(amount)) {
+        alert(`Las pujas deben ir en saltos de ${money(BID)}.`);
+        return;
+      }
       if (!confirmBid(auction, state.session.teamId, amount, slot)) return;
       await placeBid(auction.id, amount, state.session.teamId, slot);
       return;
@@ -2139,6 +2181,10 @@ async function placeBid(auctionId, amount, teamId, slotId = "") {
     alert(`Puja minima: ${money(min)}`);
     return;
   }
+  if (!isHalfMillionStep(amount)) {
+    alert(`Las pujas deben ir en saltos de ${money(BID)}.`);
+    return;
+  }
   if (amount > available) {
     alert(`Presupuesto insuficiente. Disponible: ${money(available)}`);
     return;
@@ -2159,6 +2205,7 @@ async function placeBid(auctionId, amount, teamId, slotId = "") {
       const txSlot = normalizeBidSlot(currentAuction, slot);
       const txMin = minimumBidForSlot(currentAuction, txSlot);
       if (amount < txMin) return;
+      if (!isHalfMillionStep(amount)) return;
       const txBidRole = bidRoleForSlot(txSlot);
       return {
         ...currentAuction,
