@@ -1060,7 +1060,7 @@ function renderTeamPool(items) {
     </div>
     ${items.length ? `
       <div class="stack">
-        ${items.map((item) => renderPoolItem(item, { canOpen: marketIsOpen(), label: "Abrir subasta" })).join("")}
+        ${items.map((item) => renderPoolItem(item, { canOpen: marketIsOpen(), label: "Abrir con minima" })).join("")}
       </div>
     ` : `<div class="card muted">No hay items disponibles para este periodo de mercado.</div>`}
   `;
@@ -1394,9 +1394,27 @@ function renderAdminPool() {
   `;
 }
 
+function poolAuctionDraft(item) {
+  return {
+    id: auctionKeyFor(item.id),
+    itemId: item.id,
+    itemName: item.name,
+    rating: item.rating ?? null,
+    cat: item.cat,
+    catLabel: CAT_LABEL[item.cat] || item.cat,
+    currentBid: item.basePrice || minBidFor(item.cat, item.rating || 0),
+    currentBidder: null,
+  };
+}
+
 function renderPoolItem(item, options = {}) {
   const canOpen = options.canOpen ?? true;
   const label = options.label || "Subastar";
+  const draft = poolAuctionDraft(item);
+  const teamId = state.session?.type === "team" ? state.session.teamId : "";
+  const selectedSlot = teamId ? defaultBidSlotForAuction(teamId, draft) : "";
+  const openingAmount = teamId ? minimumBidForSlot(draft, selectedSlot) : Number(draft.currentBid || 0);
+  const actionLabel = canOpen ? `${label} ${money(openingAmount)}` : label;
   return `
     <article class="card" data-item-id="${attr(item.id)}">
       <div class="row">
@@ -1410,7 +1428,14 @@ function renderPoolItem(item, options = {}) {
             ${item.cat === "driver" ? ` - reserva ${money((item.basePrice || minBidFor(item.cat, item.rating || 0)) / 2)}` : ""}
           </div>
         </div>
-        <button class="${canOpen ? "btn-success" : ""} btn-strong" data-action="open-auction" ${canOpen ? "" : "disabled"}>${escapeHtml(label)}</button>
+        ${canOpen ? `
+          <div class="pool-actions">
+            ${renderBidSlotSelect(draft, selectedSlot, !canOpen)}
+            <button class="btn-success btn-strong" data-action="open-auction">${escapeHtml(actionLabel)}</button>
+          </div>
+        ` : `
+          <button class="btn-strong" data-action="open-auction" disabled>${escapeHtml(actionLabel)}</button>
+        `}
       </div>
     </article>
   `;
@@ -2308,6 +2333,10 @@ async function openAuction(itemId) {
     alert("El mercado esta cerrado. Espera a que el admin inicie un periodo.");
     return;
   }
+  if (state.session?.type !== "team" || !state.session.teamId) {
+    alert("Las subastas deben abrirlas los equipos con una puja minima.");
+    return;
+  }
 
   const item = getAllPool().find((poolItem) => poolItem.id === itemId);
   if (!item) return;
@@ -2316,27 +2345,82 @@ async function openAuction(itemId) {
     return;
   }
 
-  const auctionId = auctionKeyFor(item.id);
-  await set(ref(state.db, `auctions/${auctionId}`), {
-    id: auctionId,
-    marketId: currentMarketId(),
-    openedBy: state.session?.teamId || "admin",
-    openedByUid: state.session?.uid || state.authUser?.uid || null,
-    openedByEmail: state.session?.email || ADMIN_EMAIL,
-    openedByType: state.session?.type || "admin",
-    itemId: item.id,
-    itemName: item.name,
-    rating: item.rating ?? null,
-    cat: item.cat,
-    catLabel: CAT_LABEL[item.cat] || item.cat,
-    currentBid: item.basePrice || minBidFor(item.cat, item.rating || 0),
-    currentBidder: null,
-    bids: {},
-    deadline: null,
-    status: "active",
-    winner: null,
-    createdAt: Date.now(),
+  const teamId = state.session.teamId;
+  const auction = poolAuctionDraft(item);
+  const auctionId = auction.id;
+  const slot = normalizeBidSlot(auction, ui.bidSlots[auctionId]) || defaultBidSlotForAuction(teamId, auction);
+  const amount = minimumBidForSlot(auction, slot);
+  const stats = teamStats(teamId);
+  const rosterCheck = rosterBidCheck(teamId, auction, amount, slot);
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    alert("Puja minima invalida.");
+    return;
+  }
+  if (!isHalfMillionStep(amount)) {
+    alert(`Las pujas deben ir en saltos de ${money(BID)}.`);
+    return;
+  }
+  if (amount > stats.available) {
+    alert(`Presupuesto insuficiente. Disponible: ${money(stats.available)}`);
+    return;
+  }
+  if (!rosterCheck.ok) {
+    alert(`Cupo completo: ${rosterCheck.label}.`);
+    return;
+  }
+
+  if (!window.confirm([
+    `Abrir subasta por ${item.name}?`,
+    `Equipo: ${teamName(teamId)}`,
+    `Slot: ${slotLabel(slot) || CAT_LABEL[item.cat] || item.cat}`,
+    `Puja inicial: ${money(amount)}`,
+    "Esto inicia el reloj de la subasta.",
+  ].join("\n"))) return;
+
+  const now = Date.now();
+  const bidRole = bidRoleForSlot(slot);
+  const bidderUid = state.session?.uid || state.authUser?.uid || null;
+  const bidderEmail = state.session?.email || null;
+  const result = await runTransaction(ref(state.db, `auctions/${auctionId}`), (currentAuction) => {
+    if (currentAuction) return;
+    return {
+      ...auction,
+      marketId: currentMarketId(),
+      openedBy: teamId,
+      openedByUid: bidderUid,
+      openedByEmail: bidderEmail,
+      openedByType: "team",
+      currentBid: amount,
+      currentBidder: teamId,
+      currentBidderUid: bidderUid,
+      currentBidderEmail: bidderEmail,
+      currentBidSlot: slot || null,
+      currentBidRole: bidRole || null,
+      deadline: calcDeadline(),
+      status: "active",
+      winner: null,
+      createdAt: now,
+      bids: {
+        [uid()]: {
+          teamId,
+          amount,
+          timestamp: now,
+          bidderUid,
+          bidderEmail,
+          slot: slot || null,
+          bidRole: bidRole || null,
+        },
+      },
+    };
   });
+
+  if (!result.committed) {
+    alert("Esta subasta ya fue abierta por otro equipo.");
+    return;
+  }
+
+  delete ui.bidSlots[auctionId];
 }
 
 async function closeAuction(auctionId) {

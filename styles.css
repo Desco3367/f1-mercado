@@ -457,6 +457,13 @@ textarea:focus {
   gap: 8px;
 }
 
+.pool-actions {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .filters {
   display: grid;
   grid-template-columns: 1fr minmax(130px, 180px) minmax(130px, 180px);
@@ -673,6 +680,7 @@ textarea:focus {
   .split,
   .grid-2,
   .grid-3,
+  .pool-actions,
   .filters,
   .save-metrics,
   .save-preview-grid,
