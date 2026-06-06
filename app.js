@@ -4,6 +4,7 @@ import { extractMarketItemsFromSave } from "./save-reader.js";
 const FIREBASE_VERSION = "10.7.0";
 const M = 1_000_000;
 const BID = 0.5 * M;
+const UNDO_WINDOW_MS = 2 * 60_000;
 const DEFAULT_ADMIN_PIN = "admin2024";
 const ADMIN_EMAIL = "admin@manager.local";
 const TEAM_AUTH_EMAILS = {
@@ -119,6 +120,7 @@ const state = {
   session: null,
   closing: new Set(),
   bidding: new Set(),
+  undoing: new Set(),
 };
 
 const ui = {
@@ -233,6 +235,14 @@ function formatDeadline(ts) {
   if (days > 0) return `${days}d ${hours}h ${minutes}m`;
   if (hours > 0) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
   return `${Math.max(1, minutes)}min`;
+}
+
+function formatShortDuration(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(Number(ms || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  return `${seconds}s`;
 }
 
 function minBidFor(cat, rating = 0) {
@@ -782,11 +792,39 @@ function normalizeLookupKey(value) {
     .replace(/[^a-z0-9]/g, "");
 }
 
+function bidEntries(auction, teamFilter = "all") {
+  return Object.entries(auction.bids || {})
+    .filter(([, bid]) => bid)
+    .filter(([, bid]) => !teamFilter || teamFilter === "all" || bid.teamId === teamFilter)
+    .sort(([, a], [, b]) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+}
+
 function allBids(auction, teamFilter = "all") {
-  return Object.values(auction.bids || {})
-    .filter(Boolean)
-    .filter((bid) => !teamFilter || teamFilter === "all" || bid.teamId === teamFilter)
-    .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+  return bidEntries(auction, teamFilter).map(([, bid]) => bid);
+}
+
+function latestBidEntry(auction) {
+  const entry = bidEntries(auction)[0];
+  return entry ? { key: entry[0], bid: entry[1] } : null;
+}
+
+function undoWindowState(auction, teamId = "") {
+  const latest = latestBidEntry(auction);
+  const latestBid = latest?.bid || null;
+  const latestTeam = latestBid?.teamId || "";
+  const isLeaderBid = latestTeam && latestTeam === auction?.currentBidder;
+  const until = isLeaderBid ? Number(latestBid?.timestamp || 0) + UNDO_WINDOW_MS : 0;
+  const remaining = until - Date.now();
+  const active = Boolean(auction && auction.status === "active" && latest && isLeaderBid && remaining > 0);
+  return {
+    active,
+    canUndo: active && latestTeam === teamId,
+    until,
+    remaining: Math.max(0, remaining),
+    latestKey: latest?.key || "",
+    latestBid,
+    teamId: latestTeam,
+  };
 }
 
 function lastBids(auction, teamFilter = "all") {
@@ -1105,9 +1143,12 @@ function renderTeamAuction(teamId, auction, options = {}) {
   const leading = auction.currentBidder === teamId;
   const hasDeadline = Boolean(auction.deadline);
   const expired = hasDeadline && Number(auction.deadline || 0) < Date.now();
+  const undo = undoWindowState(auction, teamId);
+  const undoBusy = state.undoing.has(`${auction.id}:${teamId}`);
+  const bidLocked = undo.active;
   const effectiveAvailable = stats.available + (leading ? current : 0);
   const minRosterCheck = rosterBidCheck(teamId, auction, min, selectedSlot);
-  const canBidMin = !expired && effectiveAvailable >= min && minRosterCheck.ok;
+  const canBidMin = !expired && !bidLocked && effectiveAvailable >= min && minRosterCheck.ok;
   const canBidCustom = canBidMin;
   const bids = lastBids(auction);
   const wasOutbid = !leading && !ui.dismissedOutbid.has(auction.id) &&
@@ -1115,6 +1156,8 @@ function renderTeamAuction(teamId, auction, options = {}) {
   const participated = teamHasBid(auction, teamId);
   const bidBlockedText = !minRosterCheck.ok
     ? `Cupo completo: ${minRosterCheck.label}.`
+    : bidLocked
+      ? `La puja de ${teamName(undo.teamId)} esta protegida ${formatShortDuration(undo.remaining)}.`
     : `Minimo para ${selectedSlotLabel || "este slot"}: ${money(min)}.`;
   const classes = [
     "card",
@@ -1143,7 +1186,16 @@ function renderTeamAuction(teamId, auction, options = {}) {
           ${leading ? "Estas liderando esta puja" : "Te superaron en esta puja"}
         </div>
       ` : ""}
-      ${!canBidCustom && !expired ? `<div class="pill red" style="margin-top:10px;">${escapeHtml(bidBlockedText)}</div>` : ""}
+      ${undo.active ? `
+        <div class="notice undo-window split wrap">
+          <div>
+            <strong>${undo.canUndo ? "Puedes arrepentirte de esta puja." : `Puja protegida de ${escapeHtml(teamName(undo.teamId))}.`}</strong>
+            <div class="fine">${undo.canUndo ? "Nadie puede subirla mientras tanto." : "No se puede levantar hasta que cierre la ventana."} Quedan ${escapeHtml(formatShortDuration(undo.remaining))}.</div>
+          </div>
+          ${undo.canUndo ? `<button class="btn-warn" data-action="undo-bid" ${undoBusy ? "disabled" : ""}>Arrepentirme</button>` : ""}
+        </div>
+      ` : ""}
+      ${!canBidCustom && !expired && !undo.active ? `<div class="pill red" style="margin-top:10px;">${escapeHtml(bidBlockedText)}</div>` : ""}
 
       <div class="row wrap" style="margin-top:12px;">
         <div class="price">${money(current)}</div>
@@ -1211,6 +1263,7 @@ function confirmBid(auction, teamId, amount, slotId) {
     `Importe: ${money(amount)}`,
     leaderLine,
     warningLine,
+    "Tendras 2 minutos para arrepentirte; durante ese tiempo nadie puede levantarla.",
   ].join("\n");
 
   return window.confirm(message);
@@ -1337,6 +1390,7 @@ function renderMarketControl() {
 function renderAdminAuction(auction, teamFilter = "all") {
   const hasDeadline = Boolean(auction.deadline);
   const expired = hasDeadline && Number(auction.deadline || 0) < Date.now();
+  const undo = undoWindowState(auction);
   const bids = lastBids(auction, teamFilter);
   return `
     <article class="card ${expired ? "expired" : ""}" data-auction-id="${attr(auction.id)}">
@@ -1361,6 +1415,7 @@ function renderAdminAuction(auction, teamFilter = "all") {
         </div>
         <div class="right">
           <div class="${expired ? "pill gold" : "fine"}">${expired ? "Vencio" : hasDeadline ? formatDeadline(auction.deadline) : "Sin reloj"}</div>
+          ${undo.active ? `<div class="pill gold" style="margin-top:7px;">Protegida ${escapeHtml(formatShortDuration(undo.remaining))}</div>` : ""}
           <button class="btn-danger" data-action="close-auction" style="margin-top:7px;">Cerrar</button>
         </div>
       </div>
@@ -2045,6 +2100,13 @@ async function onAction(event) {
       const card = target.closest("[data-auction-id]");
       const auction = state.auctions[card?.dataset.auctionId];
       if (!auction) return;
+      const undo = undoWindowState(auction, state.session.teamId);
+      if (undo.active) {
+        alert(undo.canUndo
+          ? `Todavia puedes arrepentirte durante ${formatShortDuration(undo.remaining)}.`
+          : `Esta puja esta protegida durante ${formatShortDuration(undo.remaining)}.`);
+        return;
+      }
       const slot = defaultBidSlotForAuction(state.session.teamId, auction);
       const amount = action === "bid-min"
         ? minimumBidForSlot(auction, slot)
@@ -2055,6 +2117,12 @@ async function onAction(event) {
       }
       if (!confirmBid(auction, state.session.teamId, amount, slot)) return;
       await placeBid(auction.id, amount, state.session.teamId, slot);
+      return;
+    }
+
+    if (action === "undo-bid") {
+      const card = target.closest("[data-auction-id]");
+      if (card) await undoBid(card.dataset.auctionId, state.session.teamId);
       return;
     }
 
@@ -2286,6 +2354,8 @@ async function placeBid(auctionId, amount, teamId, slotId = "") {
     const result = await runTransaction(ref(state.db, `auctions/${auctionId}`), (currentAuction) => {
       if (!currentAuction || currentAuction.status !== "active") return;
       if (currentAuction.deadline && Number(currentAuction.deadline) < Date.now()) return;
+      const txUndo = undoWindowState(currentAuction, teamId);
+      if (txUndo.active) return;
       const txSlot = normalizeBidSlot(currentAuction, slot);
       const txMin = minimumBidForSlot(currentAuction, txSlot);
       if (amount < txMin) return;
@@ -2325,6 +2395,64 @@ async function placeBid(auctionId, amount, teamId, slotId = "") {
     ui.dismissedOutbid.delete(auctionId);
   } finally {
     state.bidding.delete(bidKey);
+  }
+}
+
+async function undoBid(auctionId, teamId) {
+  if (!auctionId || !teamId) return;
+
+  const undoKey = `${auctionId}:${teamId}`;
+  if (state.undoing.has(undoKey)) return;
+  state.undoing.add(undoKey);
+
+  try {
+    const result = await runTransaction(ref(state.db, `auctions/${auctionId}`), (currentAuction) => {
+      if (!currentAuction || currentAuction.status !== "active") return;
+      const undo = undoWindowState(currentAuction, teamId);
+      if (!undo.canUndo || !undo.latestKey) return;
+
+      const bids = { ...(currentAuction.bids || {}) };
+      delete bids[undo.latestKey];
+
+      const previous = Object.entries(bids)
+        .filter(([, bid]) => bid)
+        .sort(([, a], [, b]) => {
+          const amountDiff = Number(b.amount || 0) - Number(a.amount || 0);
+          if (amountDiff) return amountDiff;
+          return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+        })[0]?.[1] || null;
+
+      if (!previous) return null;
+
+      return {
+        ...currentAuction,
+        currentBid: Number(previous.amount || 0),
+        currentBidder: previous.teamId || null,
+        currentBidderUid: previous.bidderUid || null,
+        currentBidderEmail: previous.bidderEmail || null,
+        currentBidSlot: previous.slot || null,
+        currentBidRole: previous.bidRole || bidRoleForAuction(currentAuction, previous.amount, previous.slot) || null,
+        bids,
+      };
+    });
+
+    if (!result.committed) {
+      alert("La ventana de arrepentimiento ya cerro o la subasta cambio.");
+      return;
+    }
+
+    delete ui.bidInputs[auctionId];
+    delete ui.bidSlots[auctionId];
+    ui.dismissedOutbid.delete(auctionId);
+  } catch (error) {
+    const message = String(error?.message || error || "");
+    if (message.includes("permission_denied")) {
+      alert("Firebase bloqueo el arrepentimiento. Hay que publicar las reglas actualizadas.");
+      return;
+    }
+    throw error;
+  } finally {
+    state.undoing.delete(undoKey);
   }
 }
 
@@ -3059,7 +3187,7 @@ function startClockRefresh() {
     if (!state.session || !loadedAll() || !activeAuctions().some((auction) => auction.deadline)) return;
     render();
     autoCloseExpired();
-  }, 30_000);
+  }, 10_000);
 }
 
 async function boot() {

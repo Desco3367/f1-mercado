@@ -1,0 +1,132 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": false,
+    "market": {
+      ".write": "auth != null && auth.token.email == 'admin@manager.local'",
+      "status": {
+        ".validate": "newData.val() == 'open' || newData.val() == 'closed'"
+      },
+      "periodId": {
+        ".validate": "newData.isString()"
+      }
+    },
+    "config": {
+      ".write": "auth != null && auth.token.email == 'admin@manager.local'",
+      "teams": {
+        "$teamId": {
+          "budget": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          }
+        }
+      }
+    },
+    "pool": {
+      ".write": "auth != null && auth.token.email == 'admin@manager.local'"
+    },
+    "rosters": {
+      ".write": "auth != null && auth.token.email == 'admin@manager.local'"
+    },
+    "auctions": {
+      "$auctionId": {
+        ".write": "auth != null && (newData.exists() || auth.token.email == 'admin@manager.local' || (data.exists() && data.child('status').val() == 'active' && data.child('openedByUid').val() == auth.uid && data.child('currentBidderUid').val() == auth.uid && data.child('bids').numChildren() == 1 && now <= data.child('createdAt').val() + 120000))",
+        ".validate": "auth.token.email == 'admin@manager.local' || (root.child('market').child('status').val() == 'open' && (data.exists() == false || data.child('status').val() == 'active'))",
+        "id": {
+          ".validate": "newData.val() == $auctionId"
+        },
+        "marketId": {
+          ".validate": "newData.isString() && (auth.token.email == 'admin@manager.local' || newData.val() == root.child('market').child('periodId').val())"
+        },
+        "openedBy": {
+          ".validate": "newData.isString()"
+        },
+        "openedByUid": {
+          ".validate": "newData.exists() == false || auth.token.email == 'admin@manager.local' || newData.val() == auth.uid || (data.exists() && newData.val() == data.val())"
+        },
+        "openedByEmail": {
+          ".validate": "newData.exists() == false || newData.isString()"
+        },
+        "openedByType": {
+          ".validate": "newData.exists() == false || newData.val() == 'team' || newData.val() == 'admin'"
+        },
+        "itemId": {
+          ".validate": "newData.isString()"
+        },
+        "itemName": {
+          ".validate": "newData.isString()"
+        },
+        "rating": {
+          ".validate": "newData.exists() == false || newData.isNumber()"
+        },
+        "cat": {
+          ".validate": "newData.val() == 'driver' || newData.val() == 'raceEngineer' || newData.val() == 'jTecnico' || newData.val() == 'sDirector' || newData.val() == 'hOfAero'"
+        },
+        "catLabel": {
+          ".validate": "newData.exists() == false || newData.isString()"
+        },
+        "currentBid": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "currentBidder": {
+          ".validate": "newData.exists() == false || newData.isString()"
+        },
+        "currentBidderUid": {
+          ".validate": "newData.exists() == false || auth.token.email == 'admin@manager.local' || newData.val() == auth.uid || (data.exists() && newData.isString())"
+        },
+        "currentBidderEmail": {
+          ".validate": "newData.exists() == false || newData.isString()"
+        },
+        "currentBidSlot": {
+          ".validate": "newData.exists() == false || newData.val() == 'p1' || newData.val() == 'p2' || newData.val() == 'r1' || newData.val() == 'r2' || newData.val() == 'ic1' || newData.val() == 'ic2' || newData.val() == 'tc' || newData.val() == 'sd' || newData.val() == 'ha'"
+        },
+        "currentBidRole": {
+          ".validate": "newData.exists() == false || newData.val() == 'reserve' || newData.val() == 'full'"
+        },
+        "deadline": {
+          ".validate": "newData.exists() == false || newData.isNumber()"
+        },
+        "status": {
+          ".validate": "auth.token.email == 'admin@manager.local' || newData.val() == 'active'"
+        },
+        "winner": {
+          ".validate": "newData.exists() == false || newData.isString()"
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "closedAt": {
+          ".validate": "newData.exists() == false || auth.token.email == 'admin@manager.local'"
+        },
+        "bids": {
+          "$bidId": {
+            ".validate": "auth.token.email == 'admin@manager.local' || data.exists() || newData.child('bidderUid').val() == auth.uid",
+            "teamId": {
+              ".validate": "newData.isString()"
+            },
+            "amount": {
+              ".validate": "newData.isNumber() && newData.val() >= 0"
+            },
+            "timestamp": {
+              ".validate": "newData.isNumber()"
+            },
+            "bidderUid": {
+              ".validate": "newData.exists() == false || newData.val() == auth.uid || auth.token.email == 'admin@manager.local' || (data.exists() && newData.val() == data.val())"
+            },
+            "bidderEmail": {
+              ".validate": "newData.exists() == false || newData.isString()"
+            },
+            "slot": {
+              ".validate": "newData.exists() == false || newData.val() == 'p1' || newData.val() == 'p2' || newData.val() == 'r1' || newData.val() == 'r2' || newData.val() == 'ic1' || newData.val() == 'ic2' || newData.val() == 'tc' || newData.val() == 'sd' || newData.val() == 'ha'"
+            },
+            "bidRole": {
+              ".validate": "newData.exists() == false || newData.val() == 'reserve' || newData.val() == 'full'"
+            }
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    }
+  }
+}

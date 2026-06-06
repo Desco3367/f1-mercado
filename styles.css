@@ -494,6 +494,10 @@ textarea:focus {
   background: var(--green-bg);
 }
 
+.notice.undo-window {
+  margin: 10px 0 0;
+}
+
 .market-control {
   margin-bottom: 12px;
 }
