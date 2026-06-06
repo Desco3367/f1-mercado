@@ -464,6 +464,10 @@ textarea:focus {
   margin-bottom: 10px;
 }
 
+.filters.with-team-filter {
+  grid-template-columns: 1fr minmax(130px, 180px) minmax(150px, 210px) minmax(130px, 180px);
+}
+
 .auction-filter {
   align-items: center;
 }

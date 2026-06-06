@@ -140,8 +140,10 @@ const ui = {
   teamAuctionFilter: "all",
   teamAuctionSort: "rating-desc",
   adminAuctionFilter: "all",
+  adminAuctionTeamFilter: "all",
   adminAuctionSort: "rating-desc",
   historyAuctionFilter: "all",
+  historyAuctionTeamFilter: "all",
   historyAuctionSort: "rating-desc",
   bidSlots: {},
   importDriversText: "",
@@ -490,8 +492,13 @@ function sortAuctions(auctions, sort) {
   });
 }
 
-function visibleAuctions(auctions, filter, sort) {
-  return sortAuctions(filterAuctionsByCat(auctions, filter), sort);
+function filterAuctionsByTeam(auctions, teamId) {
+  if (!teamId || teamId === "all") return auctions;
+  return auctions.filter((auction) => teamHasBid(auction, teamId));
+}
+
+function visibleAuctions(auctions, filter, sort, teamFilter = "all") {
+  return sortAuctions(filterAuctionsByTeam(filterAuctionsByCat(auctions, filter), teamFilter), sort);
 }
 
 function teamHasBid(auction, teamId) {
@@ -519,13 +526,31 @@ function auctionSortOptionsHtml(current) {
   `;
 }
 
-function renderAuctionFilter(id, current, all, filtered, sortId, sortCurrent) {
+function teamBidFilterOptionsHtml(current, auctions) {
+  const teams = Object.entries(state.config?.teams || {})
+    .sort(([teamA], [teamB]) => teamName(teamA).localeCompare(teamName(teamB), "es"));
   return `
-    <div class="filters auction-filter">
+    <option value="all" ${current === "all" ? "selected" : ""}>Todos los equipos</option>
+    ${teams.map(([teamId]) => {
+      const count = auctions.filter((auction) => teamHasBid(auction, teamId)).length;
+      return `<option value="${attr(teamId)}" ${current === teamId ? "selected" : ""}>${escapeHtml(teamName(teamId))}${count ? ` (${count})` : ""}</option>`;
+    }).join("")}
+  `;
+}
+
+function renderAuctionFilter(id, current, all, filtered, sortId, sortCurrent, teamFilterId = "", teamFilterCurrent = "all") {
+  const hasTeamFilter = Boolean(teamFilterId);
+  return `
+    <div class="filters auction-filter ${hasTeamFilter ? "with-team-filter" : ""}">
       <div class="muted">${filtered.length} visibles - ${all.length} subastas</div>
       <select id="${attr(id)}">
         ${auctionFilterOptionsHtml(current)}
       </select>
+      ${hasTeamFilter ? `
+        <select id="${attr(teamFilterId)}">
+          ${teamBidFilterOptionsHtml(teamFilterCurrent, all)}
+        </select>
+      ` : ""}
       <select id="${attr(sortId)}">
         ${auctionSortOptionsHtml(sortCurrent)}
       </select>
@@ -750,22 +775,27 @@ function normalizeLookupKey(value) {
     .replace(/[^a-z0-9]/g, "");
 }
 
-function lastBids(auction) {
+function allBids(auction, teamFilter = "all") {
   return Object.values(auction.bids || {})
     .filter(Boolean)
-    .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0))
-    .slice(0, 3);
-}
-
-function allBids(auction) {
-  return Object.values(auction.bids || {})
-    .filter(Boolean)
+    .filter((bid) => !teamFilter || teamFilter === "all" || bid.teamId === teamFilter)
     .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
 }
 
-function renderBidRows(auction, limit = 8) {
-  const bids = allBids(auction);
-  if (!bids.length) return `<div class="fine">Sin pujas todavia.</div>`;
+function lastBids(auction, teamFilter = "all") {
+  return allBids(auction, teamFilter).slice(0, 3);
+}
+
+function bidCountLabel(auction, teamFilter = "all") {
+  if (!teamFilter || teamFilter === "all") return `${Object.keys(auction.bids || {}).length} pujas`;
+  return `${allBids(auction, teamFilter).length} pujas de ${teamName(teamFilter)}`;
+}
+
+function renderBidRows(auction, limit = 8, teamFilter = "all") {
+  const bids = allBids(auction, teamFilter);
+  if (!bids.length) {
+    return `<div class="fine">${teamFilter && teamFilter !== "all" ? `Sin pujas registradas de ${escapeHtml(teamName(teamFilter))}.` : "Sin pujas todavia."}</div>`;
+  }
 
   return `
     <div class="bid-list">
@@ -1256,7 +1286,7 @@ function renderAdminTab() {
 
 function renderAdminAuctions() {
   const live = activeAuctions();
-  const filtered = visibleAuctions(live, ui.adminAuctionFilter, ui.adminAuctionSort);
+  const filtered = visibleAuctions(live, ui.adminAuctionFilter, ui.adminAuctionSort, ui.adminAuctionTeamFilter);
   if (!live.length) {
     return `
       ${renderMarketControl()}
@@ -1269,9 +1299,9 @@ function renderAdminAuctions() {
     ${renderMarketControl()}
     ${renderBidFormatCard()}
     <div class="label">Subastas activas (${live.length})</div>
-    ${renderAuctionFilter("admin-auction-filter", ui.adminAuctionFilter, live, filtered, "admin-auction-sort", ui.adminAuctionSort)}
+    ${renderAuctionFilter("admin-auction-filter", ui.adminAuctionFilter, live, filtered, "admin-auction-sort", ui.adminAuctionSort, "admin-auction-team-filter", ui.adminAuctionTeamFilter)}
     ${filtered.length ? `
-      <div class="stack">${filtered.map((auction) => renderAdminAuction(auction)).join("")}</div>
+      <div class="stack">${filtered.map((auction) => renderAdminAuction(auction, ui.adminAuctionTeamFilter)).join("")}</div>
     ` : `<div class="card muted">No hay subastas con estos filtros.</div>`}
   `;
 }
@@ -1298,10 +1328,10 @@ function renderMarketControl() {
   `;
 }
 
-function renderAdminAuction(auction) {
+function renderAdminAuction(auction, teamFilter = "all") {
   const hasDeadline = Boolean(auction.deadline);
   const expired = hasDeadline && Number(auction.deadline || 0) < Date.now();
-  const bids = lastBids(auction);
+  const bids = lastBids(auction, teamFilter);
   return `
     <article class="card ${expired ? "expired" : ""}" data-auction-id="${attr(auction.id)}">
       <div class="row row-top">
@@ -1311,7 +1341,7 @@ function renderAdminAuction(auction) {
           <div class="muted">
             <strong>${money(auction.currentBid)}</strong>
             ${auction.currentBidder ? ` - ${escapeHtml(teamName(auction.currentBidder))}${bidSlotSuffix(auction, auction.currentBid, auction.currentBidSlot)}` : " - sin pujas"}
-            - ${Object.keys(auction.bids || {}).length} pujas
+            - ${escapeHtml(bidCountLabel(auction, teamFilter))}
           </div>
           ${bids.length ? `
             <div class="fine">
@@ -1320,7 +1350,7 @@ function renderAdminAuction(auction) {
           ` : ""}
           <div class="bid-panel">
             <div class="label">Pujas recibidas</div>
-            ${renderBidRows(auction)}
+            ${renderBidRows(auction, 8, teamFilter)}
           </div>
         </div>
         <div class="right">
@@ -1661,10 +1691,11 @@ function renderAdminHistory() {
       <div class="card muted">Sin historial aun.</div>
     `;
   }
-  const filtered = visibleAuctions(hist, ui.historyAuctionFilter, ui.historyAuctionSort);
+  const filtered = visibleAuctions(hist, ui.historyAuctionFilter, ui.historyAuctionSort, ui.historyAuctionTeamFilter);
+  const teamFilter = ui.historyAuctionTeamFilter;
   return `
     ${renderHistoryTools()}
-    ${renderAuctionFilter("history-auction-filter", ui.historyAuctionFilter, hist, filtered, "history-auction-sort", ui.historyAuctionSort)}
+    ${renderAuctionFilter("history-auction-filter", ui.historyAuctionFilter, hist, filtered, "history-auction-sort", ui.historyAuctionSort, "history-auction-team-filter", ui.historyAuctionTeamFilter)}
     ${filtered.length ? `
       <div class="stack">
         ${filtered.map((auction) => `
@@ -1675,8 +1706,14 @@ function renderAdminHistory() {
                 <div class="item-name">${escapeHtml(auction.itemName)}</div>
                 <div class="muted">
                   ${auction.winner ? `Gano ${escapeHtml(teamName(auction.winner))} - ${money(auction.currentBid)}${bidSlotSuffix(auction, auction.currentBid, auction.currentBidSlot)}` : "Sin ganador"}
-                  - ${Object.keys(auction.bids || {}).length} pujas
+                  - ${escapeHtml(bidCountLabel(auction, teamFilter))}
                 </div>
+                ${teamFilter && teamFilter !== "all" ? `
+                  <div class="bid-panel">
+                    <div class="label">Pujas de ${escapeHtml(teamName(teamFilter))}</div>
+                    ${renderBidRows(auction, 8, teamFilter)}
+                  </div>
+                ` : ""}
               </div>
               <div class="fine right">${new Date(Number(auction.closedAt || auction.deadline || Date.now())).toLocaleDateString("es-AR")}</div>
             </div>
@@ -1838,6 +1875,14 @@ function bindEvents() {
     });
   }
 
+  const adminAuctionTeamFilter = document.getElementById("admin-auction-team-filter");
+  if (adminAuctionTeamFilter) {
+    adminAuctionTeamFilter.addEventListener("change", (event) => {
+      ui.adminAuctionTeamFilter = event.target.value;
+      render();
+    });
+  }
+
   const adminAuctionSort = document.getElementById("admin-auction-sort");
   if (adminAuctionSort) {
     adminAuctionSort.addEventListener("change", (event) => {
@@ -1850,6 +1895,14 @@ function bindEvents() {
   if (historyAuctionFilter) {
     historyAuctionFilter.addEventListener("change", (event) => {
       ui.historyAuctionFilter = event.target.value;
+      render();
+    });
+  }
+
+  const historyAuctionTeamFilter = document.getElementById("history-auction-team-filter");
+  if (historyAuctionTeamFilter) {
+    historyAuctionTeamFilter.addEventListener("change", (event) => {
+      ui.historyAuctionTeamFilter = event.target.value;
       render();
     });
   }
