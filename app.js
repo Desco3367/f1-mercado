@@ -791,7 +791,7 @@ function bidCountLabel(auction, teamFilter = "all") {
   return `${allBids(auction, teamFilter).length} pujas de ${teamName(teamFilter)}`;
 }
 
-function renderBidRows(auction, limit = 8, teamFilter = "all") {
+function renderBidRows(auction, teamFilter = "all") {
   const bids = allBids(auction, teamFilter);
   if (!bids.length) {
     return `<div class="fine">${teamFilter && teamFilter !== "all" ? `Sin pujas registradas de ${escapeHtml(teamName(teamFilter))}.` : "Sin pujas todavia."}</div>`;
@@ -799,7 +799,7 @@ function renderBidRows(auction, limit = 8, teamFilter = "all") {
 
   return `
     <div class="bid-list">
-      ${bids.slice(0, limit).map((bid) => `
+      ${bids.map((bid) => `
         <div class="bid-row ${bid.teamId === auction.currentBidder ? "bid-leader" : ""}">
           <div class="grow">
             <strong>${escapeHtml(teamName(bid.teamId))}</strong>
@@ -808,7 +808,6 @@ function renderBidRows(auction, limit = 8, teamFilter = "all") {
           <div class="metric">${money(bid.amount)}${bidSlotSuffix(auction, bid.amount, bid.slot)}</div>
         </div>
       `).join("")}
-      ${bids.length > limit ? `<div class="fine">+${bids.length - limit} pujas anteriores</div>` : ""}
     </div>
   `;
 }
@@ -1350,7 +1349,7 @@ function renderAdminAuction(auction, teamFilter = "all") {
           ` : ""}
           <div class="bid-panel">
             <div class="label">Pujas recibidas</div>
-            ${renderBidRows(auction, 8, teamFilter)}
+            ${renderBidRows(auction, teamFilter)}
           </div>
         </div>
         <div class="right">
@@ -1711,7 +1710,7 @@ function renderAdminHistory() {
                 ${teamFilter && teamFilter !== "all" ? `
                   <div class="bid-panel">
                     <div class="label">Pujas de ${escapeHtml(teamName(teamFilter))}</div>
-                    ${renderBidRows(auction, 8, teamFilter)}
+                    ${renderBidRows(auction, teamFilter)}
                   </div>
                 ` : ""}
               </div>

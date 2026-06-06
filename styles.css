@@ -614,6 +614,11 @@ textarea:focus {
 .bid-list {
   display: grid;
   gap: 6px;
+  max-height: 188px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
 }
 
 .bid-row {
@@ -621,6 +626,7 @@ textarea:focus {
   align-items: center;
   gap: 10px;
   min-width: 0;
+  min-height: 52px;
   padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
