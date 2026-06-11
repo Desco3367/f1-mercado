@@ -43,6 +43,7 @@ Las reglas actuales hacen esto:
 - Cada subasta queda asociada a `market.periodId`; no se puede reabrir el mismo item dentro del mismo periodo.
 - Cada equipo solo puede pujar como su propio equipo en subastas activas del periodo abierto.
 - La puja debe respetar identidad Firebase, incremento minimo de `0.5M`, monto base/reserva, deadline razonable e historial append-only.
+- Si el deadline anterior ya vencio, un equipo no puede reactivar la subasta cambiando el deadline a futuro.
 - Una puja reciente queda bloqueada por 2 minutos para que solo el lider pueda arrepentirse.
 - Un equipo no puede cerrar subastas ni cambiar ganador, item, categoria, historial viejo o estado.
 

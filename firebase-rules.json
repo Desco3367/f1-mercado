@@ -129,7 +129,7 @@
           ".validate": "newData.exists() == false || newData.val() == 'reserve' || newData.val() == 'full'"
         },
         "deadline": {
-          ".validate": "newData.isNumber()"
+          ".validate": "auth.token.email == 'admin@manager.local' || (newData.isNumber() && (data.exists() == false || data.val() >= now) && newData.val() > now && newData.val() <= now + 172800000)"
         },
         "status": {
           ".validate": "newData.val() == 'active' || auth.token.email == 'admin@manager.local'"
