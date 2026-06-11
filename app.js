@@ -2478,15 +2478,20 @@ async function undoBid(auctionId, teamId) {
 
       if (!previous) return null;
 
+      const restoredUid = previous.bidderUid || latestBid?.previousBidderUid || null;
+      const restoredEmail = previous.bidderEmail || latestBid?.previousBidderEmail || null;
+      const restoredSlot = previous.slot || latestBid?.previousBidSlot || null;
+      const restoredRole = previous.bidRole || latestBid?.previousBidRole || bidRoleForAuction(currentAuction, previous.amount, restoredSlot) || null;
+
       return cleanRecord({
         ...currentAuction,
         basePrice: auctionBasePrice(currentAuction),
         currentBid: Number(previous.amount || 0),
         currentBidder: previous.teamId || null,
-        currentBidderUid: previous.bidderUid || null,
-        currentBidderEmail: previous.bidderEmail || null,
-        currentBidSlot: previous.slot || null,
-        currentBidRole: previous.bidRole || bidRoleForAuction(currentAuction, previous.amount, previous.slot) || null,
+        currentBidderUid: restoredUid,
+        currentBidderEmail: restoredEmail,
+        currentBidSlot: restoredSlot,
+        currentBidRole: restoredRole,
         lastBidKey: previousKey || latestBidEntry({ bids })?.key || null,
         lastBidAt: Number(previous.timestamp || 0) || null,
         bids,
