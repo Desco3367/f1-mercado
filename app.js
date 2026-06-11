@@ -94,6 +94,9 @@ let update;
 let push;
 let get;
 let runTransaction;
+let dbQuery;
+let orderByChild;
+let equalTo;
 let getAuth;
 let signInWithEmailAndPassword;
 let firebaseSignOut;
@@ -3177,8 +3180,12 @@ function attachFirebaseListeners() {
     },
   );
 
+  const auctionsRef = isAdmin
+    ? ref(state.db, "auctions")
+    : dbQuery(ref(state.db, "auctions"), orderByChild("status"), equalTo("active"));
+
   const auctionsUnsubscribe = onValue(
-    ref(state.db, "auctions"),
+    auctionsRef,
     (snapshot) => {
       state.auctions = snapshot.val() || {};
       markLoaded("auctions");
@@ -3273,6 +3280,9 @@ async function boot() {
     push = databaseModule.push;
     get = databaseModule.get;
     runTransaction = databaseModule.runTransaction;
+    dbQuery = databaseModule.query;
+    orderByChild = databaseModule.orderByChild;
+    equalTo = databaseModule.equalTo;
     getAuth = authModule.getAuth;
     signInWithEmailAndPassword = authModule.signInWithEmailAndPassword;
     firebaseSignOut = authModule.signOut;
