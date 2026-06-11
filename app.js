@@ -5,12 +5,7 @@ const FIREBASE_VERSION = "10.7.0";
 const M = 1_000_000;
 const BID = 0.5 * M;
 const UNDO_WINDOW_MS = 2 * 60_000;
-const MAX_SAVE_FILE_BYTES = 64 * 1024 * 1024;
-const MAX_MONEY_JSON_BYTES = 2 * 1024 * 1024;
-const MAX_MONEY_TEAMS = 50;
-const MAX_MANUAL_IMPORT_CHARS = 100_000;
-const MAX_MANUAL_IMPORT_ITEMS = 600;
-const MAX_IMPORT_NAME_CHARS = 80;
+const DEFAULT_ADMIN_PIN = "admin2024";
 const ADMIN_EMAIL = "admin@manager.local";
 const TEAM_AUTH_EMAILS = {
   andretti: "andretti@ligaf1.local",
@@ -76,16 +71,16 @@ const ROSTER_LIMITS = {
 };
 
 const DEFAULT_TEAMS = {
-  mercedes: { name: "MERCEDES", manager: "TOMIK", budget: 100 * M },
-  aston: { name: "ASTON", manager: "DIABLITO", budget: 100 * M },
-  ferrari: { name: "FERRARI", manager: "ASEGALINO", budget: 100 * M },
-  mclaren: { name: "MCLAREN", manager: "JDAV", budget: 100 * M },
-  williams: { name: "WILLIAMS", manager: "PRICHID", budget: 100 * M },
-  haas: { name: "HAAS", manager: "ALEXGAMER", budget: 100 * M },
-  redbull: { name: "RED BULL", manager: "MARTINI", budget: 100 * M },
-  porsche: { name: "PORSCHE", manager: "ANTONIO", budget: 100 * M },
-  sauber: { name: "SAUBER", manager: "MARIETE", budget: 100 * M },
-  andretti: { name: "ANDRETTI", manager: "ZAK", budget: 100 * M },
+  mercedes: { name: "MERCEDES", manager: "TOMIK", pin: "1111", budget: 100 * M },
+  aston: { name: "ASTON", manager: "DIABLITO", pin: "2222", budget: 100 * M },
+  ferrari: { name: "FERRARI", manager: "ASEGALINO", pin: "3333", budget: 100 * M },
+  mclaren: { name: "MCLAREN", manager: "JDAV", pin: "4444", budget: 100 * M },
+  williams: { name: "WILLIAMS", manager: "PRICHID", pin: "5555", budget: 100 * M },
+  haas: { name: "HAAS", manager: "ALEXGAMER", pin: "6666", budget: 100 * M },
+  redbull: { name: "RED BULL", manager: "MARTINI", pin: "7777", budget: 100 * M },
+  porsche: { name: "PORSCHE", manager: "ANTONIO", pin: "8888", budget: 100 * M },
+  sauber: { name: "SAUBER", manager: "MARIETE", pin: "9999", budget: 100 * M },
+  andretti: { name: "ANDRETTI", manager: "ZAK", pin: "0000", budget: 100 * M },
 };
 
 let initializeApp;
@@ -97,9 +92,6 @@ let update;
 let push;
 let get;
 let runTransaction;
-let dbQuery;
-let orderByChild;
-let equalTo;
 let getAuth;
 let signInWithEmailAndPassword;
 let firebaseSignOut;
@@ -172,6 +164,7 @@ const ui = {
   moneyImportError: "",
   moneyImportResult: null,
   editBudget: {},
+  editPin: {},
   assign: null,
 };
 
@@ -390,23 +383,9 @@ function normalizeConfig(raw) {
     team.authEmail = team.authEmail || authEmailForTeam(id);
   }
   return {
+    adminPin: raw?.adminPin || DEFAULT_ADMIN_PIN,
     teams,
   };
-}
-
-function normalizeTeamScopedConfig(teamId, rawTeam) {
-  const { pin, ...safeTeam } = rawTeam || {};
-  const teams = cloneDefaultTeams();
-  Object.entries(teams).forEach(([id, team]) => {
-    team.budget = id === teamId ? Number(safeTeam?.budget ?? team.budget ?? 0) : 0;
-    team.authEmail = authEmailForTeam(id);
-  });
-  teams[teamId] = {
-    ...(teams[teamId] || {}),
-    ...safeTeam,
-    authEmail: authEmailForTeam(teamId),
-  };
-  return { teams };
 }
 
 function authEmailForTeam(teamId) {
@@ -423,13 +402,6 @@ function sessionFromAuthUser(user) {
   }
 
   return null;
-}
-
-function assertFileSize(file, maxBytes, label) {
-  if (!file) return;
-  if (Number(file.size || 0) > maxBytes) {
-    throw new Error(`${label} demasiado grande. Maximo permitido: ${formatBytes(maxBytes)}.`);
-  }
 }
 
 function resetFirebaseData() {
@@ -803,30 +775,13 @@ function parseGameFormat(text) {
   while (i < lines.length) {
     if (!/^\d+$/.test(lines[i]) && i + 1 < lines.length && /^\d+$/.test(lines[i + 1])) {
       const name = lines[i].replace(/([a-zA-Z])([A-Z]{2,})/g, "$1 $2").trim();
-      const rating = Number.parseInt(lines[i + 1], 10);
-      if (name && name.length <= MAX_IMPORT_NAME_CHARS && rating >= 0 && rating <= 100) {
-        result.push({ name, rating });
-      }
+      result.push({ name, rating: Number.parseInt(lines[i + 1], 10) });
       i += 2;
     } else {
       i += 1;
     }
   }
   return result;
-}
-
-function clampManualImportText(value) {
-  const text = String(value || "");
-  return text.length > MAX_MANUAL_IMPORT_CHARS ? text.slice(0, MAX_MANUAL_IMPORT_CHARS) : text;
-}
-
-function validateManualImport(label, text, parsed) {
-  if (String(text || "").length > MAX_MANUAL_IMPORT_CHARS) {
-    throw new Error(`${label}: limite de ${formatBytes(MAX_MANUAL_IMPORT_CHARS)} superado.`);
-  }
-  if (parsed.length > MAX_MANUAL_IMPORT_ITEMS) {
-    throw new Error(`${label}: limite de ${MAX_MANUAL_IMPORT_ITEMS} registros superado.`);
-  }
 }
 
 function normalizeLookupKey(value) {
@@ -849,9 +804,6 @@ function allBids(auction, teamFilter = "all") {
 }
 
 function latestBidEntry(auction) {
-  if (auction?.lastBidKey && auction?.bids?.[auction.lastBidKey]) {
-    return { key: auction.lastBidKey, bid: auction.bids[auction.lastBidKey] };
-  }
   const entry = bidEntries(auction)[0];
   return entry ? { key: entry[0], bid: entry[1] } : null;
 }
@@ -873,26 +825,6 @@ function undoWindowState(auction, teamId = "") {
     latestBid,
     teamId: latestTeam,
   };
-}
-
-function buildBidRecord(currentAuction, bid) {
-  const previous = latestBidEntry(currentAuction);
-  return cleanRecord({
-    teamId: bid.teamId,
-    amount: bid.amount,
-    timestamp: bid.timestamp,
-    bidderUid: bid.bidderUid,
-    bidderEmail: bid.bidderEmail,
-    slot: bid.slot || null,
-    bidRole: bid.bidRole || null,
-    previousBidKey: previous?.key || null,
-    previousBid: Number(currentAuction?.currentBid || 0),
-    previousBidder: currentAuction?.currentBidder || null,
-    previousBidderUid: currentAuction?.currentBidderUid || null,
-    previousBidderEmail: currentAuction?.currentBidderEmail || null,
-    previousBidSlot: currentAuction?.currentBidSlot || null,
-    previousBidRole: currentAuction?.currentBidRole || null,
-  });
 }
 
 function lastBids(auction, teamFilter = "all") {
@@ -1518,7 +1450,6 @@ function renderAdminPool() {
 }
 
 function poolAuctionDraft(item) {
-  const basePrice = Number(item.basePrice || minBidFor(item.cat, item.rating || 0));
   return {
     id: auctionKeyFor(item.id),
     itemId: item.id,
@@ -1526,8 +1457,7 @@ function poolAuctionDraft(item) {
     rating: item.rating ?? null,
     cat: item.cat,
     catLabel: CAT_LABEL[item.cat] || item.cat,
-    basePrice,
-    currentBid: basePrice,
+    currentBid: item.basePrice || minBidFor(item.cat, item.rating || 0),
     currentBidder: null,
   };
 }
@@ -1707,7 +1637,7 @@ function renderAdminImport() {
       <div class="card">
         <div class="label">Importar pilotos</div>
         <p class="muted">Pega la lista en formato nombre y OVR en lineas alternadas.</p>
-        <textarea id="import-drivers-text" maxlength="${MAX_MANUAL_IMPORT_CHARS}" placeholder="MaxVERSTAPPEN&#10;92&#10;FernandoALONSO&#10;90">${escapeHtml(ui.importDriversText)}</textarea>
+        <textarea id="import-drivers-text" placeholder="MaxVERSTAPPEN&#10;92&#10;FernandoALONSO&#10;90">${escapeHtml(ui.importDriversText)}</textarea>
         <div class="split wrap" style="margin-top:10px;">
           <span class="muted"><span id="driver-detected">${driverCount}</span> pilotos detectados</span>
           <button class="${driverCount ? "btn-primary" : ""}" data-action="import-drivers" ${driverCount ? "" : "disabled"}>Importar al pool</button>
@@ -1722,7 +1652,7 @@ function renderAdminImport() {
             <option value="${attr(cat)}" ${ui.importStaffCat === cat ? "selected" : ""}>${escapeHtml(CAT_LABEL[cat])}</option>
           `).join("")}
         </select>
-        <textarea id="import-staff-text" maxlength="${MAX_MANUAL_IMPORT_CHARS}" placeholder="JamesALLISON&#10;92&#10;PaulMONAGHAN&#10;88" style="margin-top:10px;">${escapeHtml(ui.importStaffText)}</textarea>
+        <textarea id="import-staff-text" placeholder="JamesALLISON&#10;92&#10;PaulMONAGHAN&#10;88" style="margin-top:10px;">${escapeHtml(ui.importStaffText)}</textarea>
         <div class="split wrap" style="margin-top:10px;">
           <span class="muted"><span id="staff-detected">${staffCount}</span> staff detectados - ${escapeHtml(CAT_LABEL[ui.importStaffCat])}</span>
           <button class="${staffCount ? "btn-primary" : ""}" data-action="import-staff" ${staffCount ? "" : "disabled"}>Importar al pool</button>
@@ -2074,8 +2004,7 @@ function bindEvents() {
   const driversText = document.getElementById("import-drivers-text");
   if (driversText) {
     driversText.addEventListener("input", (event) => {
-      ui.importDriversText = clampManualImportText(event.target.value);
-      if (ui.importDriversText !== event.target.value) event.target.value = ui.importDriversText;
+      ui.importDriversText = event.target.value;
       const count = parseGameFormat(ui.importDriversText).length;
       const output = document.getElementById("driver-detected");
       if (output) output.textContent = count;
@@ -2085,8 +2014,7 @@ function bindEvents() {
   const staffText = document.getElementById("import-staff-text");
   if (staffText) {
     staffText.addEventListener("input", (event) => {
-      ui.importStaffText = clampManualImportText(event.target.value);
-      if (ui.importStaffText !== event.target.value) event.target.value = ui.importStaffText;
+      ui.importStaffText = event.target.value;
       const count = parseGameFormat(ui.importStaffText).length;
       const output = document.getElementById("staff-detected");
       if (output) output.textContent = count;
@@ -2134,6 +2062,12 @@ function bindEvents() {
     });
   });
 
+  document.querySelectorAll("[data-edit-pin-input]").forEach((input) => {
+    input.addEventListener("input", (event) => {
+      const card = event.target.closest("[data-team-id]");
+      if (card) ui.editPin[card.dataset.teamId] = event.target.value;
+    });
+  });
 }
 
 async function onAction(event) {
@@ -2245,6 +2179,30 @@ async function onAction(event) {
       if (!teamId || !Number.isFinite(amount) || amount < 0) return alert("Presupuesto invalido.");
       await update(ref(state.db, `config/teams/${teamId}`), { budget: amount });
       delete ui.editBudget[teamId];
+      return;
+    }
+
+    if (action === "edit-pin") {
+      const teamId = target.closest("[data-team-id]")?.dataset.teamId;
+      if (teamId) ui.editPin[teamId] = state.config.teams[teamId].pin || "";
+      render();
+      return;
+    }
+
+    if (action === "cancel-pin") {
+      const teamId = target.closest("[data-team-id]")?.dataset.teamId;
+      if (teamId) delete ui.editPin[teamId];
+      render();
+      return;
+    }
+
+    if (action === "save-pin") {
+      const card = target.closest("[data-team-id]");
+      const teamId = card?.dataset.teamId;
+      const pin = card?.querySelector("[data-edit-pin-input]")?.value.trim();
+      if (!teamId || !pin) return alert("PIN invalido.");
+      await update(ref(state.db, `config/teams/${teamId}`), { pin });
+      delete ui.editPin[teamId];
       return;
     }
 
@@ -2391,7 +2349,6 @@ async function placeBid(auctionId, amount, teamId, slotId = "") {
   const bidKey = `${auctionId}:${teamId}`;
   if (state.bidding.has(bidKey)) return;
   state.bidding.add(bidKey);
-  const nextBidKey = uid();
 
   try {
     const result = await runTransaction(ref(state.db, `auctions/${auctionId}`), (currentAuction) => {
@@ -2404,33 +2361,26 @@ async function placeBid(auctionId, amount, teamId, slotId = "") {
       if (amount < txMin) return;
       if (!isHalfMillionStep(amount)) return;
       const txBidRole = bidRoleForSlot(txSlot);
-      const txNow = Date.now();
-      const bidderUid = state.session?.uid || state.authUser?.uid || null;
-      const bidderEmail = state.session?.email || null;
-      const bidRecord = buildBidRecord(currentAuction, {
-        teamId,
-        amount,
-        timestamp: txNow,
-        bidderUid,
-        bidderEmail,
-        slot: txSlot || null,
-        bidRole: txBidRole || null,
-      });
       return {
         ...currentAuction,
-        basePrice: auctionBasePrice(currentAuction),
         currentBid: amount,
         currentBidder: teamId,
-        currentBidderUid: bidderUid,
-        currentBidderEmail: bidderEmail,
+        currentBidderUid: state.session?.uid || state.authUser?.uid || null,
+        currentBidderEmail: state.session?.email || null,
         currentBidSlot: txSlot || null,
         currentBidRole: txBidRole || null,
         deadline: calcDeadline(),
-        lastBidKey: nextBidKey,
-        lastBidAt: txNow,
         bids: {
           ...(currentAuction.bids || {}),
-          [nextBidKey]: bidRecord,
+          [uid()]: {
+            teamId,
+            amount,
+            timestamp: Date.now(),
+            bidderUid: state.session?.uid || state.authUser?.uid || null,
+            bidderEmail: state.session?.email || null,
+            slot: txSlot || null,
+            bidRole: txBidRole || null,
+          },
         },
       };
     });
@@ -2462,40 +2412,28 @@ async function undoBid(auctionId, teamId) {
       if (!undo.canUndo || !undo.latestKey) return;
 
       const bids = { ...(currentAuction.bids || {}) };
-      const latestBid = bids[undo.latestKey] || undo.latestBid || null;
       delete bids[undo.latestKey];
 
-      const previousKey = latestBid?.previousBidKey || "";
-      const previous = previousKey && bids[previousKey]
-        ? bids[previousKey]
-        : Object.entries(bids)
-          .filter(([, bid]) => bid)
-          .sort(([, a], [, b]) => {
-            const amountDiff = Number(b.amount || 0) - Number(a.amount || 0);
-            if (amountDiff) return amountDiff;
-            return Number(b.timestamp || 0) - Number(a.timestamp || 0);
-          })[0]?.[1] || null;
+      const previous = Object.entries(bids)
+        .filter(([, bid]) => bid)
+        .sort(([, a], [, b]) => {
+          const amountDiff = Number(b.amount || 0) - Number(a.amount || 0);
+          if (amountDiff) return amountDiff;
+          return Number(b.timestamp || 0) - Number(a.timestamp || 0);
+        })[0]?.[1] || null;
 
       if (!previous) return null;
 
-      const restoredUid = previous.bidderUid || latestBid?.previousBidderUid || null;
-      const restoredEmail = previous.bidderEmail || latestBid?.previousBidderEmail || null;
-      const restoredSlot = previous.slot || latestBid?.previousBidSlot || null;
-      const restoredRole = previous.bidRole || latestBid?.previousBidRole || bidRoleForAuction(currentAuction, previous.amount, restoredSlot) || null;
-
-      return cleanRecord({
+      return {
         ...currentAuction,
-        basePrice: auctionBasePrice(currentAuction),
         currentBid: Number(previous.amount || 0),
         currentBidder: previous.teamId || null,
-        currentBidderUid: restoredUid,
-        currentBidderEmail: restoredEmail,
-        currentBidSlot: restoredSlot,
-        currentBidRole: restoredRole,
-        lastBidKey: previousKey || latestBidEntry({ bids })?.key || null,
-        lastBidAt: Number(previous.timestamp || 0) || null,
+        currentBidderUid: previous.bidderUid || null,
+        currentBidderEmail: previous.bidderEmail || null,
+        currentBidSlot: previous.slot || null,
+        currentBidRole: previous.bidRole || bidRoleForAuction(currentAuction, previous.amount, previous.slot) || null,
         bids,
-      });
+      };
     });
 
     if (!result.committed) {
@@ -2572,16 +2510,6 @@ async function openAuction(itemId) {
   const bidRole = bidRoleForSlot(slot);
   const bidderUid = state.session?.uid || state.authUser?.uid || null;
   const bidderEmail = state.session?.email || null;
-  const openingBidKey = uid();
-  const openingBid = buildBidRecord(auction, {
-    teamId,
-    amount,
-    timestamp: now,
-    bidderUid,
-    bidderEmail,
-    slot: slot || null,
-    bidRole: bidRole || null,
-  });
   const result = await runTransaction(ref(state.db, `auctions/${auctionId}`), (currentAuction) => {
     if (currentAuction) return;
     return {
@@ -2601,10 +2529,16 @@ async function openAuction(itemId) {
       status: "active",
       winner: null,
       createdAt: now,
-      lastBidKey: openingBidKey,
-      lastBidAt: now,
       bids: {
-        [openingBidKey]: openingBid,
+        [uid()]: {
+          teamId,
+          amount,
+          timestamp: now,
+          bidderUid,
+          bidderEmail,
+          slot: slot || null,
+          bidRole: bidRole || null,
+        },
       },
     };
   });
@@ -2667,12 +2601,6 @@ async function addRosterSigning(auction) {
 async function importDrivers() {
   const parsed = parseGameFormat(ui.importDriversText);
   if (!parsed.length) return;
-  try {
-    validateManualImport("Pilotos", ui.importDriversText, parsed);
-  } catch (error) {
-    alert(error.message || String(error));
-    return;
-  }
   const updates = {};
   parsed.forEach((item) => {
     const id = uid();
@@ -2690,12 +2618,6 @@ async function importDrivers() {
 async function importStaff() {
   const parsed = parseGameFormat(ui.importStaffText);
   if (!parsed.length) return;
-  try {
-    validateManualImport("Staff", ui.importStaffText, parsed);
-  } catch (error) {
-    alert(error.message || String(error));
-    return;
-  }
   const updates = {};
   parsed.forEach((item) => {
     const id = uid();
@@ -2723,7 +2645,6 @@ async function readSaveFile() {
   render();
 
   try {
-    assertFileSize(ui.saveImportFile, MAX_SAVE_FILE_BYTES, "Save");
     ui.saveImportResult = await extractMarketItemsFromSave(ui.saveImportFile);
     ui.saveImportStatus = `Lectura completa: ${ui.saveImportResult.drivers.length} pilotos y ${ui.saveImportResult.staff.length} staff.`;
   } catch (error) {
@@ -2968,7 +2889,6 @@ async function readMoneyFile() {
   render();
 
   try {
-    assertFileSize(ui.moneyImportFile, MAX_MONEY_JSON_BYTES, "JSON de dinero");
     const raw = JSON.parse(await ui.moneyImportFile.text());
     ui.moneyImportResult = buildMoneyImport(raw);
     ui.moneyImportStatus = `Lectura completa: ${ui.moneyImportResult.matched.length} equipos emparejados.`;
@@ -2983,12 +2903,6 @@ async function readMoneyFile() {
 }
 
 function buildMoneyImport(raw) {
-  if (!raw || raw.schema !== "lfm_money_export") {
-    throw new Error("El JSON no tiene schema lfm_money_export.");
-  }
-  if (raw.schemaVersion !== 1) {
-    throw new Error("Version de JSON de dinero no soportada.");
-  }
   const records = parseMoneyRecords(raw);
   const lookup = buildTeamLookup();
   const matchedByTeam = new Map();
@@ -3025,9 +2939,6 @@ function parseMoneyRecords(raw) {
 
   if (!sourceRows.length) {
     throw new Error("El JSON no tiene equipos en teams ni byTeam.");
-  }
-  if (sourceRows.length > MAX_MONEY_TEAMS) {
-    throw new Error(`El JSON trae demasiados equipos (${sourceRows.length}).`);
   }
 
   return sourceRows.map((row) => {
@@ -3092,12 +3003,6 @@ function findAppTeamId(record, lookup) {
 async function importMoneyBudgets() {
   const moneyImport = ui.moneyImportResult;
   if (!moneyImport?.matched?.length) return;
-  const message = [
-    `Aplicar dinero a ${moneyImport.matched.length} equipos?`,
-    ui.moneyImportName ? `Archivo: ${ui.moneyImportName}` : "",
-    "Esto recalcula el presupuesto base para que el dinero libre coincida con el JSON.",
-  ].filter(Boolean).join("\n");
-  if (!window.confirm(message)) return;
 
   const updates = {};
   const importedAt = Date.now();
@@ -3172,26 +3077,20 @@ async function autoCloseExpired() {
 function attachFirebaseListeners() {
   if (state.listenersAttached || !state.db || !state.session) return;
   state.listenersAttached = true;
-  const isAdmin = state.session.type === "admin";
-  const teamId = state.session.teamId || "";
 
   const configUnsubscribe = onValue(
-    ref(state.db, isAdmin ? "config" : `config/teams/${teamId}`),
+    ref(state.db, "config"),
     async (snapshot) => {
       try {
-        if (isAdmin) {
-          if (!snapshot.exists()) {
-            const initialConfig = { teams: cloneDefaultTeams() };
-            await set(ref(state.db, "config"), initialConfig);
-            state.config = normalizeConfig(initialConfig);
-          } else {
-            state.config = normalizeConfig(snapshot.val());
-          }
-        } else {
-          if (!snapshot.exists()) {
+        if (!snapshot.exists()) {
+          if (state.session?.type !== "admin") {
             throw new Error("El admin debe inicializar la configuracion primero.");
           }
-          state.config = normalizeTeamScopedConfig(teamId, snapshot.val());
+          const initialConfig = { adminPin: DEFAULT_ADMIN_PIN, teams: cloneDefaultTeams() };
+          await set(ref(state.db, "config"), initialConfig);
+          state.config = normalizeConfig(initialConfig);
+        } else {
+          state.config = normalizeConfig(snapshot.val());
         }
         markLoaded("config");
         render();
@@ -3219,12 +3118,8 @@ function attachFirebaseListeners() {
     },
   );
 
-  const auctionsRef = isAdmin
-    ? ref(state.db, "auctions")
-    : dbQuery(ref(state.db, "auctions"), orderByChild("status"), equalTo("active"));
-
   const auctionsUnsubscribe = onValue(
-    auctionsRef,
+    ref(state.db, "auctions"),
     (snapshot) => {
       state.auctions = snapshot.val() || {};
       markLoaded("auctions");
@@ -3238,11 +3133,9 @@ function attachFirebaseListeners() {
   );
 
   const rostersUnsubscribe = onValue(
-    ref(state.db, isAdmin ? "rosters" : `rosters/${teamId}`),
+    ref(state.db, "rosters"),
     (snapshot) => {
-      state.rosters = isAdmin
-        ? snapshot.val() || {}
-        : { [teamId]: snapshot.val() || {} };
+      state.rosters = snapshot.val() || {};
       markLoaded("rosters");
       render();
     },
@@ -3319,9 +3212,6 @@ async function boot() {
     push = databaseModule.push;
     get = databaseModule.get;
     runTransaction = databaseModule.runTransaction;
-    dbQuery = databaseModule.query;
-    orderByChild = databaseModule.orderByChild;
-    equalTo = databaseModule.equalTo;
     getAuth = authModule.getAuth;
     signInWithEmailAndPassword = authModule.signInWithEmailAndPassword;
     firebaseSignOut = authModule.signOut;
