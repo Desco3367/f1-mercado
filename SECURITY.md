@@ -29,6 +29,8 @@ Crea estos usuarios manualmente en Authentication. Usa contrasenas reales de al 
 | Sauber | `sauber@ligaf1.local` |
 | Williams | `williams@ligaf1.local` |
 
+Estas cuentas funcionan como nombres reservados para las reglas. Antes de abrir el mercado, verifica que todas existan en Authentication y que nadie pueda crear cuentas de equipo/admin por fuera de tu control. Si borras una cuenta, recreala inmediatamente con una clave nueva antes de volver a abrir el mercado.
+
 ## 3. Publicar reglas
 
 En Realtime Database > Rules, pega y publica el contenido de `firebase-rules.json`.
