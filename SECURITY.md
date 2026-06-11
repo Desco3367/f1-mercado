@@ -53,7 +53,11 @@ Las reglas actuales hacen esto:
 
 No publiques saves ni exports operativos en la carpeta estatica. Mantelos en `private-data` o fuera del sitio.
 
-## 5. Orden recomendado
+## 5. Importaciones
+
+Los imports manuales estan limitados por tamano de texto, cantidad de registros, media `0-100` y largo maximo de nombre. Los imports de save y dinero tambien tienen limites de tamano antes de leer el archivo.
+
+## 6. Orden recomendado
 
 1. Crea los usuarios de Auth.
 2. Entra una vez como admin si la base todavia necesita config inicial.

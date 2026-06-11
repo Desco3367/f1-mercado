@@ -8,6 +8,9 @@ const UNDO_WINDOW_MS = 2 * 60_000;
 const MAX_SAVE_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_MONEY_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_MONEY_TEAMS = 50;
+const MAX_MANUAL_IMPORT_CHARS = 100_000;
+const MAX_MANUAL_IMPORT_ITEMS = 600;
+const MAX_IMPORT_NAME_CHARS = 80;
 const ADMIN_EMAIL = "admin@manager.local";
 const TEAM_AUTH_EMAILS = {
   andretti: "andretti@ligaf1.local",
@@ -800,13 +803,30 @@ function parseGameFormat(text) {
   while (i < lines.length) {
     if (!/^\d+$/.test(lines[i]) && i + 1 < lines.length && /^\d+$/.test(lines[i + 1])) {
       const name = lines[i].replace(/([a-zA-Z])([A-Z]{2,})/g, "$1 $2").trim();
-      result.push({ name, rating: Number.parseInt(lines[i + 1], 10) });
+      const rating = Number.parseInt(lines[i + 1], 10);
+      if (name && name.length <= MAX_IMPORT_NAME_CHARS && rating >= 0 && rating <= 100) {
+        result.push({ name, rating });
+      }
       i += 2;
     } else {
       i += 1;
     }
   }
   return result;
+}
+
+function clampManualImportText(value) {
+  const text = String(value || "");
+  return text.length > MAX_MANUAL_IMPORT_CHARS ? text.slice(0, MAX_MANUAL_IMPORT_CHARS) : text;
+}
+
+function validateManualImport(label, text, parsed) {
+  if (String(text || "").length > MAX_MANUAL_IMPORT_CHARS) {
+    throw new Error(`${label}: limite de ${formatBytes(MAX_MANUAL_IMPORT_CHARS)} superado.`);
+  }
+  if (parsed.length > MAX_MANUAL_IMPORT_ITEMS) {
+    throw new Error(`${label}: limite de ${MAX_MANUAL_IMPORT_ITEMS} registros superado.`);
+  }
 }
 
 function normalizeLookupKey(value) {
@@ -1687,7 +1707,7 @@ function renderAdminImport() {
       <div class="card">
         <div class="label">Importar pilotos</div>
         <p class="muted">Pega la lista en formato nombre y OVR en lineas alternadas.</p>
-        <textarea id="import-drivers-text" placeholder="MaxVERSTAPPEN&#10;92&#10;FernandoALONSO&#10;90">${escapeHtml(ui.importDriversText)}</textarea>
+        <textarea id="import-drivers-text" maxlength="${MAX_MANUAL_IMPORT_CHARS}" placeholder="MaxVERSTAPPEN&#10;92&#10;FernandoALONSO&#10;90">${escapeHtml(ui.importDriversText)}</textarea>
         <div class="split wrap" style="margin-top:10px;">
           <span class="muted"><span id="driver-detected">${driverCount}</span> pilotos detectados</span>
           <button class="${driverCount ? "btn-primary" : ""}" data-action="import-drivers" ${driverCount ? "" : "disabled"}>Importar al pool</button>
@@ -1702,7 +1722,7 @@ function renderAdminImport() {
             <option value="${attr(cat)}" ${ui.importStaffCat === cat ? "selected" : ""}>${escapeHtml(CAT_LABEL[cat])}</option>
           `).join("")}
         </select>
-        <textarea id="import-staff-text" placeholder="JamesALLISON&#10;92&#10;PaulMONAGHAN&#10;88" style="margin-top:10px;">${escapeHtml(ui.importStaffText)}</textarea>
+        <textarea id="import-staff-text" maxlength="${MAX_MANUAL_IMPORT_CHARS}" placeholder="JamesALLISON&#10;92&#10;PaulMONAGHAN&#10;88" style="margin-top:10px;">${escapeHtml(ui.importStaffText)}</textarea>
         <div class="split wrap" style="margin-top:10px;">
           <span class="muted"><span id="staff-detected">${staffCount}</span> staff detectados - ${escapeHtml(CAT_LABEL[ui.importStaffCat])}</span>
           <button class="${staffCount ? "btn-primary" : ""}" data-action="import-staff" ${staffCount ? "" : "disabled"}>Importar al pool</button>
@@ -2054,7 +2074,8 @@ function bindEvents() {
   const driversText = document.getElementById("import-drivers-text");
   if (driversText) {
     driversText.addEventListener("input", (event) => {
-      ui.importDriversText = event.target.value;
+      ui.importDriversText = clampManualImportText(event.target.value);
+      if (ui.importDriversText !== event.target.value) event.target.value = ui.importDriversText;
       const count = parseGameFormat(ui.importDriversText).length;
       const output = document.getElementById("driver-detected");
       if (output) output.textContent = count;
@@ -2064,7 +2085,8 @@ function bindEvents() {
   const staffText = document.getElementById("import-staff-text");
   if (staffText) {
     staffText.addEventListener("input", (event) => {
-      ui.importStaffText = event.target.value;
+      ui.importStaffText = clampManualImportText(event.target.value);
+      if (ui.importStaffText !== event.target.value) event.target.value = ui.importStaffText;
       const count = parseGameFormat(ui.importStaffText).length;
       const output = document.getElementById("staff-detected");
       if (output) output.textContent = count;
@@ -2640,6 +2662,12 @@ async function addRosterSigning(auction) {
 async function importDrivers() {
   const parsed = parseGameFormat(ui.importDriversText);
   if (!parsed.length) return;
+  try {
+    validateManualImport("Pilotos", ui.importDriversText, parsed);
+  } catch (error) {
+    alert(error.message || String(error));
+    return;
+  }
   const updates = {};
   parsed.forEach((item) => {
     const id = uid();
@@ -2657,6 +2685,12 @@ async function importDrivers() {
 async function importStaff() {
   const parsed = parseGameFormat(ui.importStaffText);
   if (!parsed.length) return;
+  try {
+    validateManualImport("Staff", ui.importStaffText, parsed);
+  } catch (error) {
+    alert(error.message || String(error));
+    return;
+  }
   const updates = {};
   parsed.forEach((item) => {
     const id = uid();
