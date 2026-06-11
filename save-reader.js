@@ -1,6 +1,8 @@
 const SQL_JS_VERSION = "1.13.0";
 const SQL_JS_BASE = `https://cdnjs.cloudflare.com/ajax/libs/sql.js/${SQL_JS_VERSION}`;
 const SQLITE_SIGNATURE = "SQLite format 3";
+const MAX_SAVE_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_INFLATED_BYTES = 128 * 1024 * 1024;
 
 const DRIVER_STAT_IDS = [2, 3, 4, 5, 6, 7, 8, 9, 10];
 const STAFF_TYPES = {
@@ -14,6 +16,9 @@ let sqlJsPromise;
 
 export async function extractMarketItemsFromSave(file) {
   if (!file) throw new Error("Selecciona un archivo .sav primero.");
+  if (Number(file.size || 0) > MAX_SAVE_FILE_BYTES) {
+    throw new Error("El save es demasiado grande para importarlo desde el navegador.");
+  }
 
   const saveBytes = new Uint8Array(await file.arrayBuffer());
   const extraction = await extractDatabaseBytes(saveBytes);
@@ -103,7 +108,7 @@ function isPlausiblePayload(saveLength, offset, compressedSize, databaseSize, in
   return compressedSize > 1024
     && databaseSize > 1024
     && inflatedSize >= databaseSize
-    && inflatedSize < 256 * 1024 * 1024
+    && inflatedSize < MAX_INFLATED_BYTES
     && offset + compressedSize <= saveLength;
 }
 
