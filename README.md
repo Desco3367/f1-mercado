@@ -68,6 +68,6 @@ En el panel admin, pestana `Importar`:
 
 ## Nota de seguridad
 
-La seguridad real depende de Firebase Authentication y `firebase-rules.json`. Las reglas locales no tienen efecto hasta pegarlas y publicarlas en Firebase Console.
+La seguridad real depende de Firebase Authentication y `firebase-rules.json`. Las reglas locales no tienen efecto hasta pegarlas y publicarlas en Firebase Console. Usa `FIREBASE_RULES_PUBLICATION.md` como checklist.
 
 No publiques `save0.sav` ni exports `lfm-money-*.json` / `lfm-staff-*.json` dentro de la carpeta estatica. Guarda esos archivos en `private-data` o fuera del sitio publicado.
