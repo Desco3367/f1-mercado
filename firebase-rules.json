@@ -29,7 +29,7 @@
     },
     "auctions": {
       "$auctionId": {
-        ".write": "auth != null && (newData.exists() || auth.token.email == 'admin@manager.local' || (data.exists() && data.child('status').val() == 'active' && data.child('openedByUid').val() == auth.uid && data.child('currentBidderUid').val() == auth.uid && data.child('bids').numChildren() == 1 && now <= data.child('createdAt').val() + 120000))",
+        ".write": "auth != null && (newData.exists() || auth.token.email == 'admin@manager.local' || (data.exists() && data.child('status').val() == 'active' && data.child('openedByUid').val() == auth.uid && data.child('currentBidderUid').val() == auth.uid && now <= data.child('createdAt').val() + 120000))",
         ".validate": "auth.token.email == 'admin@manager.local' || (root.child('market').child('status').val() == 'open' && (data.exists() == false || data.child('status').val() == 'active'))",
         "id": {
           ".validate": "newData.val() == $auctionId"
